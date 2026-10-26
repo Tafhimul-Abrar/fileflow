@@ -34,7 +34,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
             <p className="text-sm font-medium uppercase tracking-[0.24em] text-sky-200">Smarter file management</p>
             <h1 className="text-5xl font-semibold leading-tight">A cleaner home for everything you upload.</h1>
             <p className="max-w-lg text-base text-slate-300">
-              FileFlow gives you a polished place to upload, organize, search, and share your files without the clutter of the original tutorial UI.
+              FileFlow gives you a polished place to upload, organize, search, and share your files from one clean workspace.
             </p>
           </div>
         </div>

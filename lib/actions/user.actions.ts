@@ -1,0 +1,201 @@
+"use server";
+
+import { createAdminClient, createSessionClient } from "@/lib/appwrite";
+import { appwriteConfig } from "@/lib/appwrite/config";
+import { Query, ID } from "node-appwrite";
+import { InputFile } from "node-appwrite/file";
+import { parseStringify, constructFileUrl } from "@/lib/utils";
+import { cookies } from "next/headers";
+import { avatarPlaceholderUrl } from "@/constants";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+
+const getUserByEmail = async (email: string) => {
+  const { databases } = await createAdminClient();
+
+  const result = await databases.listDocuments(
+    appwriteConfig.databaseId,
+    appwriteConfig.usersCollectionId,
+    [Query.equal("email", [email])],
+  );
+
+  return result.total > 0 ? result.documents[0] : null;
+};
+
+const handleError = (error: unknown, message: string) => {
+  console.log(error, message);
+  throw error;
+};
+
+export const sendEmailOTP = async ({ email }: { email: string }) => {
+  const { account } = await createAdminClient();
+
+  try {
+    const session = await account.createEmailToken(ID.unique(), email);
+
+    return session.userId;
+  } catch (error) {
+    handleError(error, "Failed to send email OTP");
+  }
+};
+
+export const createAccount = async ({
+  fullName,
+  email,
+}: {
+  fullName: string;
+  email: string;
+}) => {
+  const existingUser = await getUserByEmail(email);
+
+  if (existingUser) {
+    return parseStringify({
+      accountId: null,
+      error: "ACCOUNT_EXISTS",
+    });
+  }
+
+  const accountId = await sendEmailOTP({ email });
+  if (!accountId) throw new Error("Failed to send an OTP");
+
+  const { databases } = await createAdminClient();
+
+  await databases.createDocument(
+    appwriteConfig.databaseId,
+    appwriteConfig.usersCollectionId,
+    ID.unique(),
+    {
+      fullName,
+      email,
+      avatar: avatarPlaceholderUrl,
+      accountId,
+    },
+  );
+
+  return parseStringify({ accountId, error: null });
+};
+
+export const verifySecret = async ({
+  accountId,
+  password,
+}: {
+  accountId: string;
+  password: string;
+}) => {
+  try {
+    const { account } = await createAdminClient();
+
+    const session = await account.createSession(accountId, password);
+
+    (await cookies()).set("appwrite-session", session.secret, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "strict",
+      secure: true,
+    });
+
+    return parseStringify({ sessionId: session.$id });
+  } catch (error) {
+    handleError(error, "Failed to verify OTP");
+  }
+};
+
+export const getCurrentUser = async () => {
+  try {
+    const { databases, account } = await createSessionClient();
+
+    const result = await account.get();
+
+    const user = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.usersCollectionId,
+      [Query.equal("accountId", result.$id)],
+    );
+
+    if (user.total <= 0) return null;
+
+    const currentUser = user.documents[0];
+    const avatar = typeof currentUser.avatar === "string" ? currentUser.avatar : "";
+    const isLegacyExternalAvatar =
+      avatar.includes("img.freepik.com") || avatar.includes("cdn.pixabay.com");
+
+    return parseStringify({
+      ...currentUser,
+      avatar: isLegacyExternalAvatar || !avatar ? avatarPlaceholderUrl : avatar,
+    });
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+export const signOutUser = async () => {
+  const { account } = await createSessionClient();
+
+  try {
+    await account.deleteSession("current");
+    (await cookies()).delete("appwrite-session");
+  } catch (error) {
+    handleError(error, "Failed to sign out user");
+  } finally {
+    redirect("/sign-in");
+  }
+};
+
+export const signInUser = async ({ email }: { email: string }) => {
+  try {
+    const existingUser = await getUserByEmail(email);
+
+    if (existingUser) {
+      await sendEmailOTP({ email });
+      return parseStringify({ accountId: existingUser.accountId });
+    }
+
+    return parseStringify({ accountId: null, error: "User not found" });
+  } catch (error) {
+    handleError(error, "Failed to sign in user");
+  }
+};
+
+export const updateUserProfile = async ({
+  userId,
+  fullName,
+  avatarFile,
+}: {
+  userId: string;
+  fullName: string;
+  avatarFile?: File | null;
+}) => {
+  const { databases, storage } = await createAdminClient();
+
+  try {
+    const payload: { fullName: string; avatar?: string } = {
+      fullName,
+    };
+
+    if (avatarFile && avatarFile.size > 0) {
+      const arrayBuffer = await avatarFile.arrayBuffer();
+      const inputFile = InputFile.fromBuffer(Buffer.from(arrayBuffer), avatarFile.name);
+      const uploadedAvatar = await storage.createFile(
+        appwriteConfig.bucketId,
+        ID.unique(),
+        inputFile,
+      );
+
+      payload.avatar = constructFileUrl(uploadedAvatar.$id);
+    }
+
+    const updatedUser = await databases.updateDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.usersCollectionId,
+      userId,
+      payload,
+    );
+
+    revalidatePath("/");
+    revalidatePath("/settings");
+
+    return parseStringify(updatedUser);
+  } catch (error) {
+    handleError(error, "Failed to update user profile");
+  }
+};

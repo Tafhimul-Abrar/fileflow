@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-slate-50 text-slate-900;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    @apply outline-none;
+  }
+}
+
+@layer utilities {
+  .error-toast {
+    @apply border border-rose-200 bg-rose-500 text-white;
+  }
+
+  .remove-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
